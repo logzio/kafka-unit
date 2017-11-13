@@ -15,6 +15,7 @@
  */
 package info.batey.kafka.unit;
 
+import kafka.admin.AdminUtils$;
 import kafka.admin.ReassignPartitionsCommand;
 import kafka.admin.TopicCommand;
 import kafka.common.TopicAndPartition;
@@ -27,6 +28,7 @@ import kafka.message.MessageAndMetadata;
 import kafka.producer.KeyedMessage;
 import kafka.serializer.StringDecoder;
 import kafka.server.KafkaConfig;
+import kafka.server.KafkaServer;
 import kafka.server.KafkaServerStartable;
 import kafka.utils.VerifiableProperties;
 import kafka.utils.ZKStringSerializer$;
@@ -86,6 +88,10 @@ public class KafkaUnit {
     private int numOfBrokers;
     private ZkClient zkClient;
     private ZkUtils zkUtils;
+
+    public KafkaUnit() {
+        this(getEphemeralPort(), getEphemeralPort());
+    }
 
     public KafkaUnit(int zkPort, int brokerPort) {
         this(zkPort, brokerPort, 16);
@@ -210,7 +216,8 @@ public class KafkaUnit {
         brokerConfig.setProperty("port", Integer.toString(brokerPort));
         brokerConfig.setProperty("log.dir", logDir.getAbsolutePath());
 
-        KafkaServerStartable broker = new KafkaServerStartable(new KafkaConfig(brokerConfig));
+        KafkaServer broker = new KafkaServer(new KafkaConfig(brokerConfig), KafkaServer.$lessinit$greater$default$2(),
+                KafkaServer.$lessinit$greater$default$3(), KafkaServer.$lessinit$greater$default$4());
         broker.startup();
 
         return new KafkaBroker(brokerPort, broker);
@@ -530,9 +537,9 @@ public class KafkaUnit {
 
     public static class KafkaBroker {
         private final int port;
-        private final KafkaServerStartable kafkaServer;
+        private final KafkaServer kafkaServer;
 
-        public KafkaBroker(int port, KafkaServerStartable kafkaServer) {
+        public KafkaBroker(int port, KafkaServer kafkaServer) {
             this.port = port;
             this.kafkaServer = kafkaServer;
         }
@@ -541,7 +548,7 @@ public class KafkaUnit {
             return port;
         }
 
-        public KafkaServerStartable getKafkaServer() {
+        public KafkaServer getKafkaServer() {
             return kafkaServer;
         }
     }
