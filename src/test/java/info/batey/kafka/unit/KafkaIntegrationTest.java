@@ -55,7 +55,7 @@ public class KafkaIntegrationTest {
         try {
             List<KafkaBroker> brokers = kafkaUnitServer.getBrokers();
             for (KafkaBroker broker : brokers) {
-                assertThat(broker.getKafkaServer().serverConfig().logSegmentBytes()).isEqualTo(1024);
+                assertThat(broker.getKafkaServer().staticServerConfig().logSegmentBytes()).isEqualTo(1024);
             }
         } finally {
             kafkaUnitServer.shutdown();

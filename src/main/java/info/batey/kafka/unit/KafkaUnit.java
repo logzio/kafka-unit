@@ -15,10 +15,8 @@
  */
 package info.batey.kafka.unit;
 
-import kafka.admin.AdminUtils$;
 import kafka.admin.ReassignPartitionsCommand;
 import kafka.admin.TopicCommand;
-import kafka.common.TopicAndPartition;
 import kafka.consumer.Consumer;
 import kafka.consumer.ConsumerConfig;
 import kafka.consumer.ConsumerTimeoutException;
@@ -32,19 +30,25 @@ import kafka.server.KafkaServerStartable;
 import kafka.utils.VerifiableProperties;
 import kafka.utils.ZKStringSerializer$;
 import kafka.utils.ZkUtils;
+import kafka.zk.AdminZkClient;
+import kafka.zk.KafkaZkClient;
 import org.I0Itec.zkclient.ZkClient;
-import org.I0Itec.zkclient.ZkConnection;
 import org.apache.commons.io.FileUtils;
+import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicPartitionReplica;
 import org.apache.kafka.common.security.JaasUtils;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.apache.kafka.common.utils.Time;
 import org.junit.ComparisonFailure;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Console;
+import scala.Option;
 import scala.collection.JavaConversions;
 import scala.collection.Seq;
 import scala.collection.mutable.Buffer;
@@ -86,7 +90,7 @@ public class KafkaUnit {
     private int zkMaxConnections;
     private int numOfBrokers;
     private ZkClient zkClient;
-    private ZkUtils zkUtils;
+    private KafkaZkClient kafkaZkClient;
 
     public KafkaUnit() {
         this(getEphemeralPort(), getEphemeralPort());
@@ -161,7 +165,9 @@ public class KafkaUnit {
         // to understand behaviour
         zkClient = new ZkClient(getZookeeperString(), 30000, 30000, ZKStringSerializer$.MODULE$);
 
-        zkUtils = new ZkUtils(zkClient, new ZkConnection(getZookeeperString()), false);
+        kafkaZkClient = KafkaZkClient.apply(getZookeeperString(), false,
+                30000, 30000, 100, Time.SYSTEM,
+                KafkaZkClient.apply$default$7(), KafkaZkClient.apply$default$8());
 
         kafkaBrokerConfig.setProperty("zookeeper.connect", zookeeperString);
         kafkaBrokerConfig.setProperty("host.name", "localhost");
@@ -261,8 +267,9 @@ public class KafkaUnit {
         arguments[8] = topicName;
         TopicCommand.TopicCommandOptions opts = new TopicCommand.TopicCommandOptions(arguments);
 
-        ZkUtils zkUtils = ZkUtils.apply(opts.options().valueOf(opts.zkConnectOpt()),
-                30000, 30000, JaasUtils.isZkSecurityEnabled());
+        KafkaZkClient zkUtils = KafkaZkClient.apply(opts.options().valueOf(opts.zkConnectOpt()), JaasUtils.isZkSecurityEnabled(),
+                30000, 30000, 100, Time.SYSTEM,
+                KafkaZkClient.apply$default$7(), KafkaZkClient.apply$default$8());
         try{
             // run
             logger.info("Executing: CreateTopic " + Arrays.toString(arguments));
@@ -282,15 +289,18 @@ public class KafkaUnit {
     public void reassignPartitions(String topicName, Map<Integer, Set<Integer>> partitionToBrokerReplicaAssignments) {
         logger.info("Executing: Reassigning partitions " + partitionToBrokerReplicaAssignments);
 
-        Map<TopicAndPartition, Seq<Object>> partitionToBrokerReplicaAssignment = new HashMap<>();
+        Map<TopicPartition, Seq<Object>> partitionToBrokerReplicaAssignment = new HashMap<>();
         for (int partition : partitionToBrokerReplicaAssignments.keySet()) {
             Buffer<Object> brokers = JavaConversions.asScalaBuffer(new ArrayList(partitionToBrokerReplicaAssignments.get(partition)));
-            partitionToBrokerReplicaAssignment.put(new TopicAndPartition(topicName, partition), brokers);
+            partitionToBrokerReplicaAssignment.put(new TopicPartition(topicName, partition), brokers);
         }
 
-        scala.collection.Map<TopicAndPartition, Seq<Object>> topicAndPartitionSeqMap = JavaConversions.mapAsScalaMap(partitionToBrokerReplicaAssignment);
-        ReassignPartitionsCommand command = new ReassignPartitionsCommand(zkUtils, topicAndPartitionSeqMap, AdminUtils$.MODULE$);
-        if (!command.reassignPartitions(command.reassignPartitions$default$1())) {
+        AdminZkClient adminZkClient = new AdminZkClient(kafkaZkClient);
+        scala.collection.Map<TopicPartition, Seq<Object>> topicAndPartitionSeqMap = JavaConversions.mapAsScalaMap(partitionToBrokerReplicaAssignment);
+        scala.collection.Map<TopicPartitionReplica, String> proposedReplicaAssignment = JavaConversions.mapAsScalaMap(Collections.<TopicPartitionReplica, String>emptyMap());
+        ReassignPartitionsCommand command = new ReassignPartitionsCommand(kafkaZkClient, Option.<AdminClient>empty(),
+                topicAndPartitionSeqMap, proposedReplicaAssignment, adminZkClient);
+        if (!command.reassignPartitions(command.reassignPartitions$default$1(), command.reassignPartitions$default$2())) {
             throw new RuntimeException("Reassign failed");
         }
     }
@@ -323,7 +333,7 @@ public class KafkaUnit {
                         }
                     }
                 });
-                TopicCommand.listTopics(zkUtils, opts);
+                TopicCommand.listTopics(kafkaZkClient, opts);
             } finally {
                 Console.setOut(oldOut);
             }
@@ -363,7 +373,7 @@ public class KafkaUnit {
         try{
             // run
             logger.info("Executing: DeleteTopic " + Arrays.toString(arguments));
-            TopicCommand.deleteTopic(zkUtils, opts);
+            TopicCommand.deleteTopic(kafkaZkClient, opts);
         } finally {
             zkUtils.close();
         }
@@ -376,7 +386,7 @@ public class KafkaUnit {
             brokers.get(i).getKafkaServer().awaitShutdown();
         }
 
-        if (zkUtils != null) zkUtils.close();
+        if (kafkaZkClient != null) kafkaZkClient.close();
         if (zkClient != null) zkClient.close();
         if (zookeeper != null) zookeeper.shutdown();
     }
